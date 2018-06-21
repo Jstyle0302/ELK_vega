@@ -1,0 +1,262 @@
+{
+  "$schema": "https://vega.github.io/schema/vega/v3.0.json",
+  // "title": "只看不買",
+  "padding": 5,
+  
+  "signals": [
+    {
+      "name": "Top_k", "value": 20,
+      "bind": {"input": "range", "min": 2, "max": 30, "step": 1}
+    }
+  ],
+  
+  "title": {
+    "text": {
+      "signal": ( "只看不買"+ "\n"+ "Top by " + Top_k)
+      
+    },
+    "anchor": "center"
+   // "fontSize":10
+  },
+  
+  "data": [
+    {
+      "name": "A",
+      "url": {
+        "index": "review_user_name-*",
+        "body":{
+          "size": 2000000,
+           query: {
+            range: {
+              @timestamp: {gte: "now-15m/m", lte: "now/m",time_zone:"+08:00"}
+            }
+          } 
+        }
+      },
+      "format": {
+        "property": "hits.hits"
+      },
+      "transform": [
+        /*
+        {
+        "type": "filter", 
+        "expr": "datum._source.result.Username == \"kambiri\""
+        }
+        */
+        {
+          "type": "formula",
+          "expr": "datum._source.result.Username",
+          "as": "Username"
+        },
+        {
+          "type": "formula",
+          "expr": "datum._source.result.JsessionId",
+          "as": "JsessionId"
+        }
+        {
+          type: aggregate
+          groupby: ["Username","JsessionId"]
+          ops: ["count"]
+          as: ["total"]
+        }
+      ]
+    }
+    {
+      "name": "B",
+      "url": {
+        "index": "review_jsession_id-*"
+        "body":{
+          "size": 2000000,
+           query: {
+            range: {
+              @timestamp: {gte: "now-15m/m", lte: "now/m",time_zone:"+08:00"}
+            }
+          } 
+        }
+      },
+      "format": {
+        "property": "hits.hits"
+      },
+      "transform": [
+        {
+          "type": "formula",
+          "expr": "datum._source.result.JouneryId",
+          "as": "JouneryId"
+        },
+        {
+          "type": "formula",
+          "expr": "datum._source.result.JsessionId",
+          "as": "JsessionId"
+        }
+        {
+          type: aggregate
+          groupby: ["JouneryId","JsessionId"]
+          ops: ["count"]
+          as: ["total"]
+        }
+      ]
+    }
+    {
+      "name": "C",
+      "url": {
+        "index": "new_finish_id-"
+        "body":{
+          "size": 2000000,
+          query: {
+            range: {
+              @timestamp: {
+                gte: "now-15m/m", 
+                lte: "now/m",
+                time_zone: "+08:00"}
+            }
+          } 
+        }
+      },
+      "format": {
+        "property": "hits.hits"
+      },
+      
+      "transform": [
+        {
+          "type": "formula",
+          "expr": "datum._source.result.JouneryId",
+          "as": "JouneryId"
+        },
+        {
+          "type": "formula",
+          "expr": "datum._source.result.JsessionId",
+          "as": "JsessionId"
+        },
+        {
+          "type": "formula",
+          "expr": "datum._source.result.Username",
+          "as": "Username"
+        }
+      ]
+      
+    }
+    {
+      "name": "A&B"
+      "source": "A"
+      "transform": [
+      {
+        "type": "lookup",
+        "from": "B",
+        "value": ["JouneryId"]
+        "key": "JsessionId",
+        "fields": ["JsessionId"],
+        "as": ["obj"]
+      }
+      
+      {
+        "type": "filter", 
+        "expr": "datum.obj!=null"
+      }
+      
+      {
+          "type": "formula",
+          "expr": "datum.obj.JouneryId",
+          "as": "JouneryId"
+      }
+      
+      {
+          type: aggregate
+          groupby: ["Username","JsessionId","JouneryId"]
+          ops: ["count"]
+          as: ["total"]
+      }
+      /*
+      {
+        "type": "filter", 
+        "expr": "datum.Username==\"kambiri\""
+      }  
+      */
+      ]
+    }
+    
+    {
+      "name": "A&B-C"
+      "source": "A&B"
+      "transform": [
+      {
+        "type": "lookup",
+        "from": "C",
+        "value": ["JouneryId"]
+        "key": "JsessionId",
+        "fields": ["JsessionId"],
+        "as": ["obj2"]
+      }
+      
+      {
+        "type": "filter", 
+        "expr": "datum.obj2==null"
+      }
+      /*
+      {
+          "type": "formula",
+          "expr": "datum.obj.JouneryId",
+          "as": "JouneryId"
+      }
+      */
+      {
+          type: aggregate
+          groupby: ["Username"]
+          ops: ["count"]
+          as: ["total"]
+      }
+      {
+          "type": "window",
+          "sort": {"field": "total", "order": "descending"},
+          "ops": ["row_number"], "as": ["rank"]
+      }
+      {
+        "type": "filter", 
+        "expr": "datum.rank <= Top_k"
+      }  
+      ]
+    }
+  ]
+  
+  "scales": [
+    {
+      "name": "color",
+      "type": "ordinal",
+      "scheme": "tableau20"
+    }
+  ],
+  
+  "marks": [
+    {
+      "type": "text",
+      "from": {"data": "A&B-C"},
+      "encode": {
+        "enter": {
+          "text": {"field": "Username"},
+          "align": {"value": "center"},
+          "baseline": {"value": "alphabetic"},
+          "fill": {"scale": "color", "field": "total"}
+          "tooltip": {
+            signal: ( "Name: " + datum.Username + "\n"+ "JsessionId: " + datum.JsessionId+ "\n"+ "JouneryId: " + datum.JouneryId+"\n"+"Size: " + format(datum.total, '.0f')+ "\n")
+          }
+        },
+        "update": {
+          "fillOpacity": {"value": 1}
+        },
+        "hover": {
+          "fillOpacity": {"value": 0.5}
+        }
+      },
+      "transform": [
+        {
+          "type": "wordcloud",
+          "size": [800, 400],
+          "text": {"field": "text"},
+          "font": "Helvetica Neue, Arial",
+          "fontSize": {"field": "datum.total"},
+          "fontSizeRange": [12, 56],
+          "padding": 2
+        }
+      ]
+    }
+  ]
+}
